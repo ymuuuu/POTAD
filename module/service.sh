@@ -5,7 +5,7 @@ MODDIR=${0%/*}
 . "$MODDIR/common/functions.sh"
 
 potad_detect_env
-potad_log INFO "service.sh start (manager=$POTAD_MGR, version=0.1.0)"
+potad_log INFO "service.sh start (manager=$POTAD_MGR, version=0.1.1)"
 
 if ! potad_wait_boot 120; then
     potad_log ERROR "layer A skipped: framework never came up"

@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.1.1
+
+No functional changes. Released to check that in-app updating works from the
+root manager.
+
 ## 0.1.0
 
 First release.
