@@ -1,0 +1,23 @@
+# POTAD curated seed list.
+# Deliberately short. Auto-discovery (potad_probe) is what makes this correct
+# on any given build; padding this file with guessed names risks disabling
+# something unrelated. See spec section 5.2.
+
+# Google Play services - primary OTA path on modern Pixels
+com.google.android.gms/.update.SystemUpdateActivity
+com.google.android.gms/.update.SystemUpdateService
+com.google.android.gms/.update.SystemUpdateGcmTaskService
+
+# Google Services Framework - legacy OTA path, older builds
+com.google.android.gsf/.update.SystemUpdateService
+com.google.android.gsf/.update.SystemUpdateActivity
+
+# Google Play services - OTA UI and notification path, missed by both the v0.1
+# seed list and the auto-discovery classifier (verified on Pixel 6a, Android 16)
+com.google.android.gms/.update.OtaSuggestionActivity
+com.google.android.gms/.update.OtaSuggestionSummaryProvider
+com.google.android.gms/.update.phone.PopupDialog
+# F7: invisible to the probe - appears only in dot form under the pm dump
+# disabledComponents: block, never in slash form. Hand-seeding is the only
+# way this component gets disabled; do not assume auto-discovery covers it.
+com.google.android.gms/.update.UucNotificationReceiverService

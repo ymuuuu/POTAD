@@ -1,0 +1,9 @@
+#!/bin/sh
+printf 'getprop %s\n' "$*" >> "$POTAD_TEST_CALLS"
+case "$1" in
+    sys.boot_completed) echo "${POTAD_STUB_BOOT:-1}" ;;
+    ro.product.model)   echo "Pixel-Test" ;;
+    ro.build.version.release) echo "16" ;;
+    *) echo "" ;;
+esac
+exit 0

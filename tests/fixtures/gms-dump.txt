@@ -1,0 +1,9 @@
+    Activity Resolver Table:
+      com.google.android.gms/.update.SystemUpdateActivity
+      com.google.android.gms/.update.SystemUpdateRenamedInAndroid17
+    Service Resolver Table:
+      com.google.android.gms/.update.SystemUpdateService
+      com.google.android.gms/.chimera.PlayUpdateService
+      com.google.android.gms/.appupdate.AppUpdateService
+    Receiver Resolver Table:
+      com.google.android.gms/.update.phone.PopupDialog

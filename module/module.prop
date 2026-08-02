@@ -1,0 +1,7 @@
+id=potad
+name=POTAD - Pixel OTA Disabler
+version=0.1.0
+versionCode=1
+author=ymuu
+description=Blocks Pixel OTA system updates. Disables GMS update components, blackholes OTA endpoints, and clears staged updates on demand. Magisk / KernelSU / APatch.
+updateJson=https://raw.githubusercontent.com/ymuuuu/POTAD/main/update.json

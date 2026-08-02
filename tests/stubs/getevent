@@ -1,0 +1,6 @@
+#!/bin/sh
+# Fake input-event reader. Emits the contents of POTAD_STUB_GETEVENT verbatim
+# and exits immediately, so `timeout N getevent -lqc 1` returns at once.
+printf 'getevent %s\n' "$*" >> "$POTAD_TEST_CALLS"
+[ -n "${POTAD_STUB_GETEVENT:-}" ] && printf '%s\n' "$POTAD_STUB_GETEVENT"
+exit 0

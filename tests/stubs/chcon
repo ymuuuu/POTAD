@@ -1,0 +1,3 @@
+#!/bin/sh
+printf 'chcon %s\n' "$*" >> "$POTAD_TEST_CALLS"
+exit 0

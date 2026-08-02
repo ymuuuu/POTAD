@@ -1,0 +1,56 @@
+#!/bin/sh
+# Fake package manager. Behaviour driven by POTAD_STUB_PM_* env vars.
+printf 'pm %s\n' "$*" >> "$POTAD_TEST_CALLS"
+
+case "$1" in
+    list)
+        [ "${POTAD_STUB_PM_READY:-1}" = "1" ] || exit 1
+        echo "package:com.google.android.gms"
+        echo "package:com.google.android.gsf"
+        exit 0
+        ;;
+    dump)
+        [ -n "${POTAD_STUB_PM_DUMP:-}" ] && [ -f "$POTAD_STUB_PM_DUMP" ] \
+            && cat "$POTAD_STUB_PM_DUMP"
+        exit 0
+        ;;
+    disable)
+        # Per-component override: names listed in POTAD_STUB_PM_ABSENT report
+        # unknown regardless of the global POTAD_STUB_PM_DISABLE knob.
+        case " ${POTAD_STUB_PM_ABSENT:-} " in
+            *" $2 "*)
+                echo "Error: Unknown component: $2"
+                exit 1
+                ;;
+        esac
+        case "${POTAD_STUB_PM_DISABLE:-ok}" in
+            absent)
+                echo "Error: Unknown component: $2"
+                exit 1
+                ;;
+            refuse|refuse_all)
+                echo "java.lang.SecurityException: Permission Denial"
+                exit 1
+                ;;
+        esac
+        echo "Component $2 new state: disabled"
+        exit 0
+        ;;
+    disable-user)
+        if [ "${POTAD_STUB_PM_DISABLE:-ok}" = "refuse_all" ]; then
+            echo "java.lang.SecurityException: Permission Denial"
+            exit 1
+        fi
+        echo "Component $4 new state: disabled-user"
+        exit 0
+        ;;
+    enable)
+        echo "Component $2 new state: enabled"
+        exit 0
+        ;;
+    default-state)
+        echo "Component $2 new state: default"
+        exit 0
+        ;;
+esac
+exit 0
