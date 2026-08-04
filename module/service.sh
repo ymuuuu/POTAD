@@ -5,7 +5,7 @@ MODDIR=${0%/*}
 . "$MODDIR/common/functions.sh"
 
 potad_detect_env
-potad_log INFO "service.sh start (manager=$POTAD_MGR, version=0.1.1)"
+potad_log INFO "service.sh start (manager=$POTAD_MGR, version=0.2.0)"
 
 if ! potad_wait_boot 120; then
     potad_log ERROR "layer A skipped: framework never came up"
@@ -21,7 +21,11 @@ for _comp in $(potad_read_components); do
     potad_disable_component "$_comp"
 done
 
-potad_log INFO "layer A: $POTAD_N_DISABLED disabled, $POTAD_N_ABSENT absent, $POTAD_N_FAILED failed, $POTAD_N_NEW new-for-review"
+# The disable loop's own log lines cannot be trusted (a pm exit status of 0
+# does not mean the component stayed disabled); re-read and re-assert.
+potad_verify_components
+
+potad_log INFO "layer A: $POTAD_N_DISABLED disabled, $POTAD_N_ABSENT absent, $POTAD_N_FAILED failed, $POTAD_N_NEW new-for-review, $POTAD_N_VERIFIED verified, $POTAD_N_REENABLED re-enabled"
 
 potad_dump_cleanup
 exit 0

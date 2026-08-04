@@ -10,30 +10,34 @@ MODDIR=${0%/*}
 
 potad_detect_env
 
-potad_out "POTAD 0.1.1 - Pixel OTA Disabler"
+potad_out "POTAD 0.2.0 - Pixel OTA Disabler"
 potad_out "Root manager: $POTAD_MGR"
 potad_out ""
 
 # --- Status -----------------------------------------------------------------
 potad_out "Status"
-if grep -q "ota.googlezip.net" "$POTAD_HOSTS_TARGET" 2>/dev/null; then
-    potad_out "  hosts blackhole: active"
-else
-    potad_out "  hosts blackhole: NOT active"
-fi
+potad_verify_hosts
+potad_report_update_check
 
 # One `pm dump` per package, not per component. The GMS dump is ~50k lines
 # and takes seconds; dumping it once per entry in components.list made the
 # status report take half a minute. potad_pm_dump caches per process, so the
 # probe further down reuses these same files.
+#
+# Report the real state per component, not "present" - presence says nothing
+# about whether the block is actually on, which is the one question this
+# section exists to answer.
 for _pkg in $POTAD_PROBE_PKGS; do
     _dump=$(potad_pm_dump "$_pkg") || continue
     # shellcheck disable=SC2013
     for _comp in $(potad_read_components); do
         case "$_comp" in "$_pkg"/*) ;; *) continue ;; esac
-        if grep -qF "$_comp" "$_dump"; then
-            potad_out "  present: $_comp"
-        fi
+        _state=$(potad_component_state "$_dump" "$_comp")
+        case "$_state" in
+            absent)  ;; # nothing on this build, nothing to say
+            enabled) potad_out "  ENABLED: $_comp" ;;
+            *)       potad_out "  $_state: $_comp" ;;
+        esac
     done
 done
 potad_out ""
@@ -78,6 +82,12 @@ else
     potad_out "  ERROR: neither update_engine_client binary links on this device"
     potad_log ERROR "layer C skipped: no usable client binary"
 fi
+# Outside the branch on purpose: --cancel only clears update_engine's
+# in-memory view, and the payload files on disk survive it - update_engine
+# fed itself from a pre-POTAD payload that way. Deleting files needs no
+# client binary, and a device where neither binary links is exactly the one
+# that most needs the on-disk half to still happen.
+potad_clear_staged_package
 potad_out ""
 
 # --- Probe + re-apply layer A -----------------------------------------------
@@ -87,7 +97,8 @@ potad_probe
 for _comp in $(potad_read_components); do
     potad_disable_component "$_comp"
 done
-potad_out "  $POTAD_N_DISABLED disabled, $POTAD_N_ABSENT absent, $POTAD_N_FAILED failed"
+potad_verify_components
+potad_out "  $POTAD_N_DISABLED disabled, $POTAD_N_ABSENT absent, $POTAD_N_FAILED failed, $POTAD_N_VERIFIED verified, $POTAD_N_REENABLED re-enabled"
 
 # --- Layer B: re-apply the hosts blackhole ----------------------------------
 # Restore lifts the bind mount, and post-fs-data only runs at boot, so without

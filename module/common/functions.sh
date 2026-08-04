@@ -13,6 +13,8 @@ export POTAD_HOSTS_MERGED="$POTAD_ROOT/hosts"
 export POTAD_HOSTS_TARGET="${POTAD_HOSTS_TARGET:-/system/etc/hosts}"
 export POTAD_MOUNTS="${POTAD_MOUNTS:-/proc/mounts}"
 export POTAD_MODDIR="${POTAD_MODDIR:-${MODDIR:-/data/adb/modules/potad}}"
+export POTAD_GMS_UPDATE_PREFS="${POTAD_GMS_UPDATE_PREFS:-/data/data/com.google.android.gms/shared_prefs/UPDATE_INFO_METADATA_PREFS.xml}"
+export POTAD_OTA_PACKAGE_DIR="${POTAD_OTA_PACKAGE_DIR:-/data/ota_package}"
 POTAD_LOG_MAX=262144
 
 # Counters, summed across a layer-A run.
@@ -20,6 +22,10 @@ export POTAD_N_DISABLED=0
 export POTAD_N_ABSENT=0
 export POTAD_N_FAILED=0
 export POTAD_N_NEW=0
+# Filled by potad_verify_components after a layer-A run: how many components
+# the re-read dump confirms as disabled, and how many came back enabled.
+export POTAD_N_VERIFIED=0
+export POTAD_N_REENABLED=0
 
 potad_log() {
     _lvl="$1"
@@ -78,6 +84,16 @@ potad_pm_dump() {
 
 potad_dump_cleanup() {
     rm -f "$POTAD_ROOT"/.dump.*."$$"
+}
+
+# Drops one package's cached dump. A re-assert changes only that package;
+# potad_dump_cleanup would throw away every other package's dump too. With
+# today's two packages that costs nothing measurable - gsf sorts after gms, so
+# it is dumped after the last re-assert either way - so this is about not
+# discarding state we know is still good. It stops being free the moment
+# POTAD_PROBE_PKGS grows.
+potad_dump_drop() {
+    rm -f "$POTAD_ROOT/.dump.$1.$$"
 }
 
 # APatch and KernelSU Next are checked before plain KernelSU because both also
@@ -166,6 +182,101 @@ potad_disable_component() {
     potad_log ERROR "failed $_comp: $_out"
     POTAD_N_FAILED=$((POTAD_N_FAILED + 1))
     return 0
+}
+
+# Ground truth for whether a disable actually stuck. potad_disable_component
+# trusts the exit status of `pm disable`, and on the live device two
+# components it logged as disabled sat in the dump's enabledComponents: block
+# afterwards - either GMS re-asserted them or the pm call silently did
+# nothing. The dump is the only honest source, so that is what this reads.
+#
+# Slash form in, dot form compared: components arrive as pkg/.Class but the
+# disabledComponents:/enabledComponents: blocks list pkg.Class. The block
+# scanning is the same shape as potad_probe's - a header line, indented
+# entries, terminated by the next line ending in a colon - because real
+# dumpsys output indents headers too, so a column-0 anchor would swallow
+# everything after the block.
+potad_component_state() {
+    _dump="$1"
+    _comp="$2"
+    _dot="${_comp%%/*}${_comp#*/}"
+    # Slash form appears in resolver tables, dot form in the state blocks;
+    # finding neither means the component does not exist on this build.
+    if ! grep -qF "$_comp" "$_dump" 2>/dev/null && ! grep -qF "$_dot" "$_dump" 2>/dev/null; then
+        printf '%s\n' absent
+        return 0
+    fi
+    # The entry is compared whole, not with index(): GMS ships components whose
+    # names are prefixes of others (SystemUpdateActivity is a prefix of a
+    # hypothetical SystemUpdateActivityAlias, and the live dump carries 25 such
+    # pairs already). A substring match would let a longer name in the OTHER
+    # block decide this component's state - and because enabledComponents:
+    # comes second, the wrong answer would be "enabled", producing a false
+    # ERROR and a pointless re-assert on the one path that exists to report
+    # the truth.
+    awk -v c="$_dot" '
+        /disabledComponents:/ { b = "disabled"; next }
+        /enabledComponents:/  { b = "enabled"; next }
+        b && /:[[:space:]]*$/ { b = "" }
+        b { entry = $0
+            gsub(/^[[:space:]]+|[[:space:]]+$/, "", entry)
+            if (entry == c) found = b }
+        END { print (found ? found : "default") }
+    ' "$_dump"
+}
+
+# Runs after the disable loop and checks what actually happened, because the
+# loop's own reporting cannot be trusted (see above). A component that comes
+# back enabled is re-asserted exactly once. Not looping is deliberate: an
+# infinite re-assert fight with GMS would be worse than reporting the truth.
+potad_verify_components() {
+    # Any cached dump predates the disables and would show the state POTAD
+    # started from, not the one it left.
+    potad_dump_cleanup
+    # shellcheck disable=SC2013
+    for _comp in $(potad_read_components); do
+        _dump=$(potad_pm_dump "${_comp%%/*}") || continue
+        _state=$(potad_component_state "$_dump" "$_comp")
+        case "$_state" in
+            disabled)
+                POTAD_N_VERIFIED=$((POTAD_N_VERIFIED + 1))
+                potad_log INFO "verified $_comp"
+                ;;
+            enabled)
+                potad_log ERROR "re-enabled after disable: $_comp"
+                POTAD_N_REENABLED=$((POTAD_N_REENABLED + 1))
+                # The re-assert goes through potad_disable_component for its
+                # absent/disable-user fallbacks and restore-list recording, but
+                # it must not inflate the disabled count - this component was
+                # already counted by the disable loop, and a summary reading
+                # "9 disabled" for 8 components is not a report anyone trusts.
+                # A failed re-assert still increments POTAD_N_FAILED, which is
+                # the one number that should move here.
+                _n_before=$POTAD_N_DISABLED
+                potad_disable_component "$_comp"
+                POTAD_N_DISABLED=$_n_before
+                # The re-assert changed the state, so the dump just taken is
+                # stale again before the re-check.
+                potad_dump_drop "${_comp%%/*}"
+                _dump=$(potad_pm_dump "${_comp%%/*}") || continue
+                _state=$(potad_component_state "$_dump" "$_comp")
+                if [ "$_state" = "disabled" ]; then
+                    POTAD_N_VERIFIED=$((POTAD_N_VERIFIED + 1))
+                    potad_log INFO "re-assert held $_comp"
+                else
+                    potad_log ERROR "still $_state after re-assert: $_comp"
+                fi
+                ;;
+            default)
+                # pm said "disabled" yet the dump shows the component in
+                # neither block - the disable did not take effect either.
+                potad_log WARN "not disabled (default state): $_comp"
+                ;;
+            absent)
+                potad_log INFO "absent $_comp"
+                ;;
+        esac
+    done
 }
 
 POTAD_PROBE_PKGS="com.google.android.gms com.google.android.gsf"
@@ -259,6 +370,12 @@ potad_probe() {
     return 0
 }
 
+# android.googleapis.com is deliberately absent from this list. It serves the
+# update *check*, but it also carries sign-in, FCM push, Play Store and device
+# checkin - blackholing it breaks the phone. A check that finds an update it
+# can never download is harmless: the payload hosts below are the ones that
+# matter. This is a decided design call (verified on-device 2026-08-04), not
+# an oversight - do not "fix" the list by adding it.
 POTAD_HOSTS_ENTRIES="ota.googlezip.net update.googleapis.com"
 
 # Layer B: blackhole the OTA endpoints with a self-managed bind mount, merging
@@ -315,6 +432,50 @@ potad_apply_hosts() {
     return 1
 }
 
+# Per-host layer-B health. Both halves matter: the entry without the mount
+# means POTAD wrote a file nobody reads, and the mount without the entry
+# blackholes nothing.
+potad_verify_hosts() {
+    for _host in $POTAD_HOSTS_ENTRIES; do
+        if ! grep -qxF "127.0.0.1 $_host" "$POTAD_HOSTS_TARGET" 2>/dev/null; then
+            potad_out "  $_host: NOT blocked (no hosts entry)"
+            continue
+        fi
+        if ! grep -q " $POTAD_HOSTS_TARGET " "$POTAD_MOUNTS" 2>/dev/null; then
+            potad_out "  $_host: hosts entry present but blackhole NOT mounted"
+            continue
+        fi
+        potad_out "  $_host: blocked"
+    done
+}
+
+# Update *checks* still succeed with POTAD fully active - android.googleapis.com
+# is reachable by design (see POTAD_HOSTS_ENTRIES) - so GMS keeps recording
+# last_check_time_millis. That is harmless, but invisible state reads as
+# broken, so surface it. Best-effort: unreadable prefs are the normal case
+# without root and never an error.
+potad_report_update_check() {
+    if [ ! -r "$POTAD_GMS_UPDATE_PREFS" ]; then
+        potad_out "  last update check: unknown (GMS prefs unreadable)"
+        return 0
+    fi
+    _ms=$(sed -n 's/.*name="last_check_time_millis" value="\([0-9]*\)".*/\1/p' \
+        "$POTAD_GMS_UPDATE_PREFS" 2>/dev/null | head -n 1)
+    if [ -z "$_ms" ]; then
+        potad_out "  last update check: never recorded"
+        return 0
+    fi
+    # Toybox and busybox date both take -d @<epoch>; if neither does, print
+    # the raw value rather than nothing.
+    _when=$(date -d "@$((_ms / 1000))" '+%Y-%m-%d %H:%M:%S' 2>/dev/null)
+    if [ -n "$_when" ]; then
+        potad_out "  last update check: $_when"
+    else
+        potad_out "  last update check: ${_ms}ms epoch"
+    fi
+    return 0
+}
+
 # Probes the prebuilt AOSP clients newest-first. A binary built against a
 # different libc/linker prints "CANNOT LINK EXECUTABLE" and is unusable.
 # Technique carried over from Badabing2005's clear_ota_updates.
@@ -361,6 +522,42 @@ potad_run_client() {
     potad_out "  $_cflag: FAILED (exit $_crc) $_cout"
     potad_log ERROR "$_cflag failed (exit $_crc): $_cout"
     return 1
+}
+
+# Layer C's blind spot: --cancel clears update_engine's in-memory view, but
+# leftover payload files in /data/ota_package survive it - on the live device
+# --cancel reported "nothing staged" while a payload dated before POTAD was
+# installed sat there, and update_engine fed itself from it.
+#
+# Whitelist, never rm -rf: this is a deletion path on a user's device and has
+# to be auditable. Anything unrecognised is logged and left alone, and the
+# directory itself survives. The files are a re-downloadable cache, so
+# restore.sh deliberately does NOT recreate them - there is nothing to undo.
+potad_clear_staged_package() {
+    [ -d "$POTAD_OTA_PACKAGE_DIR" ] || {
+        potad_log INFO "no staged package directory ($POTAD_OTA_PACKAGE_DIR)"
+        return 0
+    }
+    _n=0
+    _bytes=0
+    for _f in "$POTAD_OTA_PACKAGE_DIR"/*; do
+        # Globs that matched nothing and non-regular files (subdirectories):
+        # not ours to touch.
+        [ -f "$_f" ] || continue
+        case "${_f##*/}" in
+            payload.bin|payload_metadata.bin|payload_properties.txt|metadata|metadata.pb|apex_info.pb|care_map.pb|*.zip)
+                _sz=$(wc -c < "$_f" 2>/dev/null || echo 0)
+                rm -f "$_f"
+                _n=$((_n + 1))
+                _bytes=$((_bytes + ${_sz:-0}))
+                ;;
+            *)
+                potad_log WARN "left alone (unrecognised): $_f"
+                ;;
+        esac
+    done
+    potad_out "  staged package: removed $_n file(s), freed $_bytes bytes"
+    return 0
 }
 
 # Volume-key chooser for the action dialog (D1).

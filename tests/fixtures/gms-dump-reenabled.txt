@@ -1,0 +1,14 @@
+    Activity Resolver Table:
+      com.google.android.gms/.update.SystemUpdateActivity
+      com.google.android.gms/.update.OtaSuggestionSummaryProvider
+      disabledComponents:
+        com.google.android.gms.update.SystemUpdateGcmTaskService
+        com.google.android.gms.update.OtaSuggestionActivity
+        com.google.android.gms.update.UucNotificationReceiverService
+        com.google.android.gms.update.phone.PopupDialog
+      enabledComponents:
+        com.google.android.gms.update.SystemUpdateActivity
+        com.google.android.gms.update.OtaSuggestionSummaryProvider
+        com.google.android.gms.update.SystemUpdateGcmTaskServiceAlias
+    Service Resolver Table:
+      com.google.android.gms/.update.SystemUpdateService
