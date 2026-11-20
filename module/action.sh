@@ -10,7 +10,7 @@ MODDIR=${0%/*}
 
 potad_detect_env
 
-potad_out "POTAD 0.2.0 - Pixel OTA Disabler"
+potad_out "POTAD 0.2.1 - Pixel OTA Disabler"
 potad_out "Root manager: $POTAD_MGR"
 potad_out ""
 

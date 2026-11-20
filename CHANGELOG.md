@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.2.1
+
+Fixes Layer B hosts bind visibility under root-hiding Zygisk implementations such as ReZygisk.
+
+- Moved the merged hosts bind source from `/data/adb/potad/hosts` to `/data/adb/modules/potad/hosts`, changing the `/proc/self/mountinfo` mount root to `/adb/modules/potad/hosts` so ReZygisk (`umount_root`) unmounts it inside app namespaces while keeping POTAD's self-managed bind mount independent of mount metamodules.
+- Rebuilds `/data/adb/modules/potad/hosts` automatically on boot or action re-apply after module updates replace the module directory.
+- Added upgrade migration: unmounts any active legacy `/adb/potad/hosts` bind before binding the new source (never stacking binds or touching third-party hosts mounts) and deletes unused `/data/adb/potad/hosts`.
+- Updated `uninstall.sh` and standalone `restore.sh` to lift POTAD's hosts bind and clean up both `/data/adb/modules/potad/hosts` and `/data/adb/potad/hosts`, including when `restore.list` is empty.
+
 ## 0.2.0
 
 Fixes for three gaps found while verifying 0.1.1 against a live Pixel 6a.

@@ -8,15 +8,18 @@ export PATH="$POTAD_TEST_ROOT/tests/stubs:$PATH"
 POTAD_TMP=$(mktemp -d)
 trap 'rm -rf "$POTAD_TMP"' EXIT INT TERM
 
+cp -R "$POTAD_TEST_ROOT/module" "$POTAD_TMP/module"
 export POTAD_ROOT="$POTAD_TMP/potad"
-export POTAD_MODDIR="$POTAD_TEST_ROOT/module"
+export POTAD_MODDIR="$POTAD_TMP/module"
 export POTAD_TEST_CALLS="$POTAD_TMP/calls"
 export POTAD_HOSTS_TARGET="$POTAD_TMP/hosts_target"
 export POTAD_MOUNTS="$POTAD_TMP/mounts"
+export POTAD_MOUNTINFO="$POTAD_TMP/mountinfo"
 
 mkdir -p "$POTAD_ROOT"
 : > "$POTAD_TEST_CALLS"
 : > "$POTAD_MOUNTS"
+: > "$POTAD_MOUNTINFO"
 
 # Stub defaults: package manager up, boot complete, disable succeeds.
 export POTAD_STUB_PM_READY=1

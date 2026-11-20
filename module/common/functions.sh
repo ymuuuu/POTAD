@@ -9,10 +9,12 @@ export POTAD_LOG="$POTAD_ROOT/potad.log"
 export POTAD_DISCOVERED="$POTAD_ROOT/discovered.list"
 export POTAD_PREDISABLED="$POTAD_ROOT/predisabled.list"
 export POTAD_RESTORE="$POTAD_ROOT/restore.list"
-export POTAD_HOSTS_MERGED="$POTAD_ROOT/hosts"
+export POTAD_MODDIR="${POTAD_MODDIR:-${MODDIR:-/data/adb/modules/potad}}"
+export POTAD_HOSTS_MERGED="${POTAD_HOSTS_MERGED:-$POTAD_MODDIR/hosts}"
+export POTAD_HOSTS_LEGACY="$POTAD_ROOT/hosts"
 export POTAD_HOSTS_TARGET="${POTAD_HOSTS_TARGET:-/system/etc/hosts}"
 export POTAD_MOUNTS="${POTAD_MOUNTS:-/proc/mounts}"
-export POTAD_MODDIR="${POTAD_MODDIR:-${MODDIR:-/data/adb/modules/potad}}"
+export POTAD_MOUNTINFO="${POTAD_MOUNTINFO:-/proc/self/mountinfo}"
 export POTAD_GMS_UPDATE_PREFS="${POTAD_GMS_UPDATE_PREFS:-/data/data/com.google.android.gms/shared_prefs/UPDATE_INFO_METADATA_PREFS.xml}"
 export POTAD_OTA_PACKAGE_DIR="${POTAD_OTA_PACKAGE_DIR:-/data/ota_package}"
 POTAD_LOG_MAX=262144
@@ -378,21 +380,165 @@ potad_probe() {
 # an oversight - do not "fix" the list by adding it.
 POTAD_HOSTS_ENTRIES="ota.googlezip.net update.googleapis.com"
 
-# Layer B: blackhole the OTA endpoints with a self-managed bind mount, merging
-# into whatever hosts file is live so AdAway and friends keep working.
-#
-# Called from post-fs-data and again from the action button's Block path, so
-# re-blocking after a restore does not need a reboot. The early return is what
-# makes the second caller safe: once our own bind mount is live,
-# $POTAD_HOSTS_TARGET and $POTAD_HOSTS_MERGED are the same inode, and copying
-# a file onto itself would truncate the mount source.
-potad_apply_hosts() {
-    if grep -q "^127\.0\.0\.1[[:space:]]*ota\.googlezip\.net" "$POTAD_HOSTS_TARGET" 2>/dev/null &&
-       grep -q " $POTAD_HOSTS_TARGET " "$POTAD_MOUNTS" 2>/dev/null; then
-        potad_log INFO "layer B: already active"
+potad_hosts_entries_present() {
+    for _host in $POTAD_HOSTS_ENTRIES; do
+        grep -qxF "127.0.0.1 $_host" "$POTAD_HOSTS_TARGET" 2>/dev/null || return 1
+    done
+    return 0
+}
+
+# Queries $POTAD_MOUNTINFO to classify the topmost mount on $POTAD_HOSTS_TARGET
+# or detect any legacy bind source still pinned beneath another mount.
+# Reads the procfs stream directly (never `-s`, as procfs reports 0 bytes) and
+# resolves device-relative mount roots via matching `$4 == "/"` entries so both
+# `/data` userdata mounts and separate `modules.img` mounts resolve cleanly.
+_potad_mountinfo_query() {
+    _mode="$1"
+    [ -r "$POTAD_MOUNTINFO" ] || return 2
+    _cur_rel="${POTAD_HOSTS_MERGED#/data}"
+    [ "$_cur_rel" = "$POTAD_HOSTS_MERGED" ] && _cur_rel=""
+    _leg_rel="${POTAD_HOSTS_LEGACY#/data}"
+    [ "$_leg_rel" = "$POTAD_HOSTS_LEGACY" ] && _leg_rel=""
+    awk -v mode="$_mode" \
+        -v target="$POTAD_HOSTS_TARGET" \
+        -v cur="$POTAD_HOSTS_MERGED" -v cur_rel="$_cur_rel" \
+        -v leg="$POTAD_HOSTS_LEGACY" -v leg_rel="$_leg_rel" '
+        function norm_root(d, r, d_arr,    is_del, full) {
+            is_del = 0
+            if (sub(/\/\/deleted$/, "", r) || sub(/\\040\(deleted\)$/, "", r)) {
+                is_del = 1
+            }
+            full = r
+            if (d in d_arr && d_arr[d] != "/") {
+                full = d_arr[d] r
+            }
+            return is_del "|" full
+        }
+        function is_match(path, exact, rel) {
+            return (path == exact || (rel != "" && path == rel))
+        }
+        BEGIN { has_lines = 0; n = 0 }
+        {
+            has_lines = 1
+            if ($4 == "/") {
+                if (!($3 in dev_mp) || length($5) < length(dev_mp[$3])) {
+                    dev_mp[$3] = $5
+                }
+            }
+            if ($5 == target) {
+                n++
+                devs[n] = $3
+                roots[n] = $4
+            }
+        }
+        END {
+            if (!has_lines) { exit 2 }
+            if (mode == "has_legacy") {
+                for (i = 1; i <= n; i++) {
+                    split(norm_root(devs[i], roots[i], dev_mp), p, "|")
+                    if (is_match(p[2], leg, leg_rel)) { exit 0 }
+                }
+                exit 1
+            }
+            if (n == 0) { print "none"; exit 0 }
+            split(norm_root(devs[n], roots[n], dev_mp), p, "|")
+            if (is_match(p[2], cur, cur_rel)) {
+                print (p[1] == "1" ? "current_deleted" : "current")
+            } else if (is_match(p[2], leg, leg_rel)) {
+                print "legacy"
+            } else {
+                print "other"
+            }
+        }
+    ' "$POTAD_MOUNTINFO" 2>/dev/null
+}
+
+potad_hosts_mount_kind() {
+    if _kind=$(_potad_mountinfo_query kind); then
+        printf '%s\n' "$_kind"
         return 0
     fi
     if grep -q " $POTAD_HOSTS_TARGET " "$POTAD_MOUNTS" 2>/dev/null; then
+        printf '%s\n' unknown
+    else
+        printf '%s\n' none
+    fi
+}
+
+potad_hosts_legacy_mounted() {
+    _potad_mountinfo_query has_legacy
+}
+
+potad_cleanup_legacy_hosts() {
+    if [ -f "$POTAD_HOSTS_LEGACY" ] && ! potad_hosts_legacy_mounted; then
+        rm -f "$POTAD_HOSTS_LEGACY" 2>/dev/null
+        potad_log INFO "layer B: removed unused legacy hosts file"
+    fi
+}
+
+# Layer B: blackhole the OTA endpoints with a self-managed bind mount from
+# $POTAD_MODDIR/hosts so root-hiding Zygisk implementations unmount it via the
+# /adb/modules/ mountinfo rule, while merging live entries so AdAway survives.
+#
+# Called from post-fs-data and again from the action button's Block path.
+# Unmounts any stale/deleted/legacy POTAD bind first so we never stack binds
+# or overwrite a file while it is bind-mounted onto $POTAD_HOSTS_TARGET.
+potad_apply_hosts() {
+    _kind=$(potad_hosts_mount_kind)
+    _unmounted_potad=0
+    case "$_kind" in
+        current)
+            if [ -f "$POTAD_HOSTS_MERGED" ] &&
+               potad_hosts_entries_present &&
+               grep -q " $POTAD_HOSTS_TARGET " "$POTAD_MOUNTS" 2>/dev/null; then
+                potad_cleanup_legacy_hosts
+                potad_log INFO "layer B: already active"
+                return 0
+            fi
+            if ! umount "$POTAD_HOSTS_TARGET" 2>/dev/null; then
+                potad_log ERROR "layer B: failed to unmount stale bind on $POTAD_HOSTS_TARGET"
+                return 1
+            fi
+            _unmounted_potad=1
+            potad_log INFO "layer B: unmounted stale bind on $POTAD_HOSTS_TARGET"
+            ;;
+        current_deleted)
+            if ! umount "$POTAD_HOSTS_TARGET" 2>/dev/null; then
+                potad_log ERROR "layer B: failed to unmount deleted bind on $POTAD_HOSTS_TARGET"
+                return 1
+            fi
+            _unmounted_potad=1
+            potad_log INFO "layer B: unmounted deleted bind on $POTAD_HOSTS_TARGET"
+            ;;
+        legacy)
+            if ! umount "$POTAD_HOSTS_TARGET" 2>/dev/null; then
+                potad_log ERROR "layer B: failed to unmount legacy bind on $POTAD_HOSTS_TARGET; refusing to stack binds"
+                return 1
+            fi
+            _unmounted_potad=1
+            potad_log INFO "layer B: unmounted legacy bind on $POTAD_HOSTS_TARGET"
+            if [ -f "$POTAD_HOSTS_LEGACY" ]; then
+                rm -f "$POTAD_HOSTS_LEGACY" 2>/dev/null
+                potad_log INFO "layer B: removed unused legacy hosts file"
+            fi
+            ;;
+        unknown)
+            if [ -f "$POTAD_HOSTS_MERGED" ] && potad_hosts_entries_present; then
+                potad_cleanup_legacy_hosts
+                potad_log INFO "layer B: already active"
+                return 0
+            fi
+            potad_log WARN "hosts already mounted by another module; last mount wins"
+            ;;
+        other)
+            potad_log WARN "hosts already mounted by another module; last mount wins"
+            ;;
+    esac
+
+    if [ "$_unmounted_potad" -eq 0 ]; then
+        potad_cleanup_legacy_hosts
+    elif grep -q " $POTAD_HOSTS_TARGET " "$POTAD_MOUNTS" 2>/dev/null &&
+         [ "$(potad_hosts_mount_kind)" = "other" ]; then
         potad_log WARN "hosts already mounted by another module; last mount wins"
     fi
 
@@ -401,6 +547,11 @@ potad_apply_hosts() {
         cp -f "$POTAD_HOSTS_TARGET" "$POTAD_HOSTS_MERGED" 2>/dev/null || : > "$POTAD_HOSTS_MERGED"
     else
         : > "$POTAD_HOSTS_MERGED"
+    fi
+
+    if [ ! -f "$POTAD_HOSTS_MERGED" ]; then
+        potad_log ERROR "layer B: failed to create $POTAD_HOSTS_MERGED"
+        return 1
     fi
 
     # A source file without a trailing newline would otherwise glue onto our
