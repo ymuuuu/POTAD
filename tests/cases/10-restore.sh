@@ -9,6 +9,7 @@ _seed_state() {
     printf '%s\n%s\n' "$_A" "$_B" > "$POTAD_ROOT/restore.list"
     : > "$POTAD_ROOT/predisabled.list"
     : > "$POTAD_ROOT/discovered.list"
+    : > "$POTAD_MODDIR/hosts"
     : > "$POTAD_ROOT/hosts"
     : > "$POTAD_ROOT/potad.log"
 }
@@ -28,7 +29,8 @@ _n=$(grep -c "^pm " "$POTAD_TEST_CALLS")
 [ ! -f "$POTAD_ROOT/restore.list" ] || fail "restore.list not deleted"
 [ ! -f "$POTAD_ROOT/predisabled.list" ] || fail "predisabled.list not deleted"
 [ ! -f "$POTAD_ROOT/discovered.list" ] || fail "discovered.list not deleted"
-[ ! -f "$POTAD_ROOT/hosts" ] || fail "hosts not deleted"
+[ ! -f "$POTAD_MODDIR/hosts" ] || fail "module hosts not deleted"
+[ ! -f "$POTAD_ROOT/hosts" ] || fail "legacy hosts not deleted"
 [ -f "$POTAD_ROOT/potad.log" ] || fail "potad.log must survive restore"
 [ -f "$POTAD_MODDIR/restore.sh" ] || fail "restore.sh must survive its own run"
 assert_log "restore done"
@@ -63,10 +65,50 @@ printf '%s\n' "$_o" | grep -q "restored $POTAD_HOSTS_TARGET" \
     || fail "a lifted blackhole must be on screen; got: $_o"
 unset POTAD_STUB_UMOUNT
 
-# Nothing recorded: explains and exits 0 without touching pm.
-rm -f "$POTAD_ROOT/restore.list"
+# Empty restore.list with active POTAD mount still lifts the blackhole and deletes hosts.
 : > "$POTAD_TEST_CALLS"
-_out=$(sh "$POTAD_MODDIR/restore.sh") || fail "empty restore.list must exit 0"
+: > "$POTAD_MOUNTS"
+: > "$POTAD_MODDIR/hosts"
+: > "$POTAD_ROOT/hosts"
+printf '10 1 254:52 / / rw - ext4 /dev/root rw\n21 10 254:52 %s %s rw - ext4 /dev/root rw\n' \
+    "$POTAD_MODDIR/hosts" "$POTAD_HOSTS_TARGET" > "$POTAD_MOUNTINFO"
+printf '/dev/root %s ext4 rw 0 0\n' "$POTAD_HOSTS_TARGET" > "$POTAD_MOUNTS"
+export POTAD_STUB_UMOUNT=ok
+_o=$(sh "$POTAD_MODDIR/restore.sh") || fail "empty restore.list with hosts must exit 0"
+assert_no_call "pm "
+assert_call "umount $POTAD_HOSTS_TARGET"
+[ ! -f "$POTAD_MODDIR/hosts" ] || fail "module hosts not deleted on empty restore.list"
+[ ! -f "$POTAD_ROOT/hosts" ] || fail "legacy hosts not deleted on empty restore.list"
+unset POTAD_STUB_UMOUNT
+
+# Third-party hosts mount in mountinfo is never unmounted.
+: > "$POTAD_TEST_CALLS"
+: > "$POTAD_MODDIR/hosts"
+printf '10 1 254:52 / / rw - ext4 /dev/root rw\n22 10 254:52 /adb/modules/hosts/system/etc/hosts %s rw - ext4 /dev/root rw\n' \
+    "$POTAD_HOSTS_TARGET" > "$POTAD_MOUNTINFO"
+_o=$(sh "$POTAD_MODDIR/restore.sh") || fail "restore with third-party mount must exit 0"
+assert_no_call "umount "
+printf '%s\n' "$_o" | grep -q "mounted by another module" \
+    || fail "third-party mount not reported intact; got: $_o"
+
+# Standalone execution survives when POTAD_MODDIR has already been removed.
+cp "$POTAD_MODDIR/restore.sh" "$POTAD_ROOT/restore.sh"
+rm -rf "$POTAD_MODDIR"
+: > "$POTAD_TEST_CALLS"
+: > "$POTAD_MOUNTS"
+: > "$POTAD_MOUNTINFO"
+printf '%s\n' "$_A" > "$POTAD_ROOT/restore.list"
+: > "$POTAD_ROOT/hosts"
+_o=$(sh "$POTAD_ROOT/restore.sh") || fail "standalone restore without MODDIR must exit 0"
+assert_call "pm default-state $_A"
+[ ! -f "$POTAD_ROOT/hosts" ] || fail "legacy hosts survived standalone restore"
+
+# Nothing recorded and no hosts artifacts: explains and exits 0 without touching pm.
+rm -f "$POTAD_ROOT/restore.list" "$POTAD_ROOT/hosts"
+: > "$POTAD_MOUNTS"
+: > "$POTAD_MOUNTINFO"
+: > "$POTAD_TEST_CALLS"
+_out=$(sh "$POTAD_ROOT/restore.sh") || fail "empty restore.list must exit 0"
 assert_no_call "pm "
 case "$_out" in
     *"Nothing recorded to restore"*) ;;

@@ -21,10 +21,10 @@ cp "$MODPATH/restore.sh" "$POTAD_ROOT/restore.sh"
 chmod 0700 "$POTAD_ROOT/restore.sh"
 
 potad_detect_env
-potad_log INFO "=== POTAD 0.2.0 installed ==="
+potad_log INFO "=== POTAD 0.2.1 installed ==="
 potad_log INFO "manager=$POTAD_MGR model=$(getprop ro.product.model) android=$(getprop ro.build.version.release)"
 
-ui_print "- POTAD 0.2.0"
+ui_print "- POTAD 0.2.1"
 ui_print "- Root manager: $POTAD_MGR"
 
 # Best-effort: an install from recovery has no working package manager, in

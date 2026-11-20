@@ -1,5 +1,16 @@
 # POTAD — Pixel OTA Disabler
 
+<p align="center">
+  <a href="https://github.com/ymuuuu/POTAD/releases/latest"><img src="https://img.shields.io/github/v/release/ymuuuu/POTAD?style=flat&color=0969DA" alt="Latest release" /></a>
+  <a href="https://github.com/ymuuuu/POTAD/releases"><img src="https://img.shields.io/github/downloads/ymuuuu/POTAD/total?style=flat&color=8957E5" alt="Total downloads across all releases" /></a>
+  <a href="https://github.com/ymuuuu/POTAD/stargazers"><img src="https://img.shields.io/github/stars/ymuuuu/POTAD?style=flat&label=%E2%98%85&color=E3B341" alt="GitHub stars" /></a>
+  <img src="https://img.shields.io/badge/license-MIT-F0883E?style=flat" alt="License: MIT" />
+  <img src="https://img.shields.io/badge/Android%20(Pixel)-3DDC84?style=flat&logo=android&logoColor=white" alt="Platform: Android (Pixel)" />
+  <a href="https://t.me/ymuulabs"><img src="https://img.shields.io/badge/Telegram-26A5E4?style=flat&logo=telegram&logoColor=white" alt="Telegram channel" /></a>
+  <a href="https://x.com/ymuuu_"><img src="https://img.shields.io/badge/X-000000?style=flat&logo=x&logoColor=white" alt="Follow on X" /></a>
+  <a href="https://paypal.me/ymuu"><img src="https://img.shields.io/badge/PayPal-003087?style=flat&logo=paypal&logoColor=white" alt="Support me on PayPal" /></a>
+</p>
+
 Stops Google from pushing system updates to your Pixel. Works with Magisk, KernelSU,
 KernelSU Next, SukiSU and APatch.
 

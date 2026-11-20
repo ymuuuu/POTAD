@@ -20,7 +20,7 @@ rm -f "$ZIP"
 chmod 0755 "$SRC/action.sh" "$SRC/bin/update_engine_client_r28" "$SRC/bin/update_engine_client_r72"
 
 # -r from inside SRC so module.prop sits at the archive root.
-(cd "$SRC" && zip -r -q -X "$ZIP" . -x '.*' -x '*/.*')
+(cd "$SRC" && zip -r -q -X "$ZIP" . -x '.*' -x '*/.*' -x 'hosts')
 
 echo "built $ZIP"
 unzip -l "$ZIP" | sed 's/^/  /'
